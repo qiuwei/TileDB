@@ -461,6 +461,7 @@ int* SparseArrayFx::read_sparse_array_2D(
 
   CHECK(rc == TILEDB_OK);
   auto buffer = new int[buffer_size / sizeof(int)];
+  memset(buffer, 0, buffer_size);
   REQUIRE(buffer != nullptr);
 
   // Create query
@@ -758,7 +759,6 @@ void SparseArrayFx::test_random_subarrays(
     int* buffer = read_sparse_array_2D(
         array_name, d0_lo, d0_hi, d1_lo, d1_hi, TILEDB_READ, TILEDB_ROW_MAJOR);
     CHECK(buffer != NULL);
-
     // check
     bool allok = true;
     for (int64_t i = d0_lo; i <= d0_hi; ++i) {
@@ -766,7 +766,7 @@ void SparseArrayFx::test_random_subarrays(
         bool match = buffer[index] == i * domain_size_1 + j;
         if (!match) {
           allok = false;
-          std::cout << "mismatch: " << i << "," << j << "=" << buffer[index]
+          std::cerr << "mismatch: " << i << "," << j << "=" << buffer[index]
                     << "!=" << ((i * domain_size_1 + j)) << "\n";
           break;
         }
@@ -786,6 +786,7 @@ void SparseArrayFx::check_sorted_reads(
     tiledb_filter_type_t compressor,
     tiledb_layout_t tile_order,
     tiledb_layout_t cell_order) {
+
   // Parameters used in this test
   int64_t domain_size_0 = 5000;
   int64_t domain_size_1 = 1000;
@@ -797,7 +798,6 @@ void SparseArrayFx::check_sorted_reads(
   int64_t domain_1_hi = domain_size_1 - 1;
   int64_t capacity = 100000;
   int iter_num = (compressor != TILEDB_FILTER_BZIP2) ? ITER_NUM : 1;
-
   create_sparse_array_2D(
       array_name,
       tile_extent_0,

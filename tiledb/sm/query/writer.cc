@@ -44,6 +44,10 @@
 #include <iostream>
 #include <sstream>
 
+// TODO JOE rm
+#include <chrono> 
+using namespace std::chrono; 
+
 namespace tiledb {
 namespace sm {
 
@@ -441,17 +445,48 @@ Status Writer::write() {
   STATS_FUNC_IN(writer_write);
 
   // In case the user has provided a coordinates buffer
-  RETURN_NOT_OK(split_coords_buffer());
+  auto start1 = high_resolution_clock::now();
+  auto st1 = split_coords_buffer();
+  auto duration1 = duration_cast<microseconds>(high_resolution_clock::now() - start1);
+  static uint64_t total_time1 = 0;
+  total_time1 += duration1.count();
+  ////std::cerr << "JOE Writer::write total_time1 " << total_time1 << std::endl;
+  RETURN_NOT_OK(st1);
 
-  if (check_coord_oob_)
-    RETURN_NOT_OK(check_coord_oob());
+  if (check_coord_oob_) {
+    auto start5 = high_resolution_clock::now();
+    auto st = check_coord_oob();
+    auto duration5 = duration_cast<microseconds>(high_resolution_clock::now() - start5);
+    static uint64_t total_time5 = 0;
+    total_time5 += duration5.count();
+    ////std::cerr << "JOE Writer::write total_time5 " << total_time5 << std::endl;
+    RETURN_NOT_OK(st);
+  }
 
   if (layout_ == Layout::COL_MAJOR || layout_ == Layout::ROW_MAJOR) {
-    RETURN_NOT_OK(ordered_write());
+    auto start2 = high_resolution_clock::now();
+    auto st = ordered_write();
+    auto duration2 = duration_cast<microseconds>(high_resolution_clock::now() - start2);
+    static uint64_t total_time2 = 0;
+    total_time2 += duration2.count();
+    ////std::cerr << "JOE Writer::write total_time2 " << total_time2 << std::endl;
+    RETURN_NOT_OK(st);
   } else if (layout_ == Layout::UNORDERED) {
-    RETURN_NOT_OK(unordered_write());
+    auto start3 = high_resolution_clock::now();
+    auto st = unordered_write();
+    auto duration3 = duration_cast<microseconds>(high_resolution_clock::now() - start3);
+    static uint64_t total_time3 = 0;
+    total_time3 += duration3.count();
+    //std::cerr << "JOE Writer::write total_time3 " << total_time3 << std::endl;
+    RETURN_NOT_OK(st);
   } else if (layout_ == Layout::GLOBAL_ORDER) {
-    RETURN_NOT_OK(global_write());
+    auto start4 = high_resolution_clock::now();
+    auto st = global_write();
+    auto duration4 = duration_cast<microseconds>(high_resolution_clock::now() - start4);
+    static uint64_t total_time4 = 0;
+    total_time4 += duration4.count();
+    ////std::cerr << "JOE Writer::write total_time4 " << total_time4 << std::endl;
+    RETURN_NOT_OK(st);
   } else {
     assert(false);
   }
@@ -1010,27 +1045,19 @@ Status Writer::compute_coords_metadata(
   // Compute MBRs
   auto statuses = parallel_for(0, tile_num, [&](uint64_t t) {
     std::vector<T> mbr(2 * dim_num);
-    std::vector<T*> data(dim_num);
+    std::vector<ChunkedBuffer*> chunked_data(dim_num);
     uint64_t cell_num = UINT64_MAX;
     for (unsigned d = 0; d < dim_num; ++d) {
       const auto& dim_name = array_schema_->dimension(d)->name();
       auto tiles_it = tiles.find(dim_name);
-      assert(tiles_it != tiles.end());
-      data[d] = (T*)(tiles_it->second[t].internal_data());
-      assert(
-          cell_num == UINT64_MAX || cell_num == tiles_it->second[t].cell_num());
+      chunked_data[d] = (tiles_it->second[t].chunked_buffer());
+      assert( 
+          cell_num == UINT64_MAX || cell_num == tiles_it->second[t].cell_num());  
       cell_num = tiles_it->second[t].cell_num();
-
-      // Initialize MBR with the first coords
-      mbr[2 * d] = data[d][0];
-      mbr[2 * d + 1] = data[d][0];
     }
 
-    // Expand the MBR with the rest coords
-    assert(cell_num > 0);
-    for (uint64_t c = 1; c < cell_num; ++c)
-      utils::geometry::expand_mbr<T>(data, c, &mbr[0]);
-
+    // Expand the MBR with the rest coords.
+    RETURN_NOT_OK(expand_mbr(chunked_data, cell_num, &mbr[0]));
     meta->set_mbr(t, &mbr[0]);
     return Status::Ok();
   });
@@ -1043,6 +1070,66 @@ Status Writer::compute_coords_metadata(
   const auto& dim_name = array_schema_->dimension(0)->name();
   uint64_t last_tile_cell_num = tiles.find(dim_name)->second.back().cell_num();
   meta->set_last_tile_cell_num(last_tile_cell_num);
+
+  return Status::Ok();
+}
+
+template <class T>
+Status Writer::expand_mbr(
+    const std::vector<ChunkedBuffer*>& coords,
+    const uint64_t cell_num,
+    T* const mbr) const {
+  if (cell_num == 0) {
+    return Status::Ok();
+  }
+
+  const size_t dim_num = coords.size();
+  for (size_t d = 0; d < dim_num; ++d) {
+    ChunkedBuffer* const chunked_buffer = coords[d];
+
+    size_t chunk_idx = 0;
+    size_t chunk_offset = 0;
+
+    // Fetch the first internal buffer.
+    void* buffer;
+    RETURN_NOT_OK(chunked_buffer->internal_buffer(chunk_idx, &buffer));
+
+    for (uint64_t pos = 0; pos < cell_num; ++pos) {
+      // Move to the next internal chunk buffer if the offset exceeds the
+      // current chunk buffer's size.
+      uint32_t chunk_size;
+      RETURN_NOT_OK(
+          chunked_buffer->internal_buffer_size(chunk_idx, &chunk_size));
+      if (chunk_offset >= chunk_size) {
+        ++chunk_idx;
+        chunk_offset = 0;
+
+        // Fetch the next internal buffer and its associated size.
+        RETURN_NOT_OK(chunked_buffer->internal_buffer(chunk_idx, &buffer));
+        RETURN_NOT_OK(
+            chunked_buffer->internal_buffer_size(chunk_idx, &chunk_size));
+      }
+
+      // Sanity check we have sufficient space to perform our random access
+      // read of 'buffer'.
+      if (chunk_size < (chunk_offset + sizeof(T))) {
+        return Status::UtilsError(
+            "Out of bounds read to internal chunk buffer of size " +
+            std::to_string(chunk_size));
+      }
+
+      const T c =
+          *reinterpret_cast<T*>(static_cast<char*>(buffer) + chunk_offset);
+      chunk_offset += sizeof(T);
+
+      if (pos == 0) {
+        mbr[2 * d] = c;
+        mbr[2 * d + 1] = c;
+      } else {
+        utils::geometry::expand_mbr<T>(d, c, mbr);
+      }
+    }
+  }
 
   return Status::Ok();
 }
@@ -1170,7 +1257,7 @@ Status Writer::filter_tiles(
 
 Status Writer::filter_tile(
     const std::string& name, Tile* tile, bool offsets) const {
-  auto orig_size = tile->buffer()->size();
+  const auto orig_size = tile->chunked_buffer()->size();
 
   // Get a copy of the appropriate filter pipeline.
   FilterPipeline filters =
@@ -1695,7 +1782,6 @@ Status Writer::prepare_full_tiles(
     auto buff_it = buffers_.begin();
     std::advance(buff_it, i);
     const auto& name = buff_it->first;
-
     RETURN_CANCEL_OR_ERROR(
         prepare_full_tiles(name, coord_dups, &(*tiles)[name]));
     return Status::Ok();
@@ -1748,9 +1834,10 @@ Status Writer::prepare_full_tiles_fixed(
       } while (!last_tile.full() && cell_idx != cell_num);
     } else {
       do {
-        if (coord_dups.find(cell_idx) == coord_dups.end())
+        if (coord_dups.find(cell_idx) == coord_dups.end()) {
           RETURN_NOT_OK(
               last_tile.write(buffer + cell_idx * cell_size, cell_size));
+        }
         ++cell_idx;
       } while (!last_tile.full() && cell_idx != cell_num);
     }
@@ -1847,6 +1934,7 @@ Status Writer::prepare_full_tiles_var(
   auto& last_tile_pair = global_write_state_->last_tiles_[name];
   auto& last_tile = last_tile_pair.first;
   auto& last_tile_var = last_tile_pair.second;
+
   uint64_t cell_idx = 0;
   if (!last_tile.empty()) {
     if (coord_dups.empty()) {
@@ -2021,37 +2109,39 @@ Status Writer::prepare_tiles(
       // Write empty range
       if (wcr.pos_ > pos) {
         if (var_size)
-          write_empty_cell_range_to_tile_var(
-              wcr.pos_ - pos, &(*tiles)[t], &(*tiles)[t + 1]);
+          RETURN_NOT_OK(write_empty_cell_range_to_tile_var(
+              wcr.pos_ - pos, &(*tiles)[t], &(*tiles)[t + 1]));
         else
-          write_empty_cell_range_to_tile(
-              (wcr.pos_ - pos) * cell_val_num, &(*tiles)[t]);
+          RETURN_NOT_OK(write_empty_cell_range_to_tile(
+              (wcr.pos_ - pos) * cell_val_num, &(*tiles)[t]));
         pos = wcr.pos_;
       }
 
       // Write (non-empty) range
-      if (var_size)
-        write_cell_range_to_tile_var(
+      if (var_size) {
+        RETURN_NOT_OK(write_cell_range_to_tile_var(
             buff.get(),
             buff_var.get(),
             wcr.start_,
             wcr.end_,
             &(*tiles)[t],
-            &(*tiles)[t + 1]);
-      else
-        write_cell_range_to_tile(
-            buff.get(), wcr.start_, wcr.end_, &(*tiles)[t]);
+            &(*tiles)[t + 1]));
+      } else {
+        RETURN_NOT_OK(write_cell_range_to_tile(
+            buff.get(), wcr.start_, wcr.end_, &(*tiles)[t]));
+      }
       pos += wcr.end_ - wcr.start_ + 1;
     }
 
     // Write empty range
     if (pos <= end_pos) {
-      if (var_size)
-        write_empty_cell_range_to_tile_var(
-            end_pos - pos + 1, &(*tiles)[t], &(*tiles)[t + 1]);
-      else
-        write_empty_cell_range_to_tile(
-            (end_pos - pos + 1) * cell_val_num, &(*tiles)[t]);
+      if (var_size) {
+        RETURN_NOT_OK(write_empty_cell_range_to_tile_var(
+            end_pos - pos + 1, &(*tiles)[t], &(*tiles)[t + 1]));
+      } else {
+        RETURN_NOT_OK(write_empty_cell_range_to_tile(
+            (end_pos - pos + 1) * cell_val_num, &(*tiles)[t]));
+      }
     }
   }
 
@@ -2298,27 +2388,54 @@ Status Writer::unordered_write() {
   assert(layout_ == Layout::UNORDERED);
 
   // Sort coordinates first
+  auto start1 = high_resolution_clock::now();
   std::vector<uint64_t> cell_pos;
   RETURN_CANCEL_OR_ERROR(sort_coords(&cell_pos));
+  auto duration1 = duration_cast<microseconds>(high_resolution_clock::now() - start1);
+  static uint64_t total_time1 = 0;
+  total_time1 += duration1.count();
+  //std::cerr << "JOE Writer::unordered_write total_time1 " << total_time1 << std::endl;
 
   // Check for coordinate duplicates
-  if (check_coord_dups_ && !dedup_coords_)
+  if (check_coord_dups_ && !dedup_coords_) {
+    auto start2 = high_resolution_clock::now();
     RETURN_CANCEL_OR_ERROR(check_coord_dups(cell_pos));
+    auto duration2 = duration_cast<microseconds>(high_resolution_clock::now() - start2);
+    static uint64_t total_time2 = 0;
+    total_time2 += duration2.count();
+    //std::cerr << "JOE Writer::unordered_write total_time2 " << total_time2 << std::endl;
+  }
 
   // Retrieve coordinate duplicates
   std::set<uint64_t> coord_dups;
-  if (dedup_coords_)
+  if (dedup_coords_) {
+    auto start3 = high_resolution_clock::now();
     RETURN_CANCEL_OR_ERROR(compute_coord_dups(cell_pos, &coord_dups));
+    auto duration3 = duration_cast<microseconds>(high_resolution_clock::now() - start3);
+    static uint64_t total_time3 = 0;
+    total_time3 += duration3.count();
+    //std::cerr << "JOE Writer::unordered_write total_time3 " << total_time3 << std::endl;
+  }
 
   // Create new fragment
   std::shared_ptr<FragmentMetadata> frag_meta;
+  auto start4 = high_resolution_clock::now();
   RETURN_CANCEL_OR_ERROR(create_fragment(false, &frag_meta));
+  auto duration4 = duration_cast<microseconds>(high_resolution_clock::now() - start4);
+  static uint64_t total_time4 = 0;
+  total_time4 += duration4.count();
+  //std::cerr << "JOE Writer::unordered_write total_time4 " << total_time4 << std::endl;
   const auto& uri = frag_meta->fragment_uri();
 
   // Prepare tiles
   std::unordered_map<std::string, std::vector<Tile>> tiles;
+  auto start5 = high_resolution_clock::now();
   RETURN_CANCEL_OR_ERROR_ELSE(
       prepare_tiles(cell_pos, coord_dups, &tiles), clean_up(uri));
+  auto duration5 = duration_cast<microseconds>(high_resolution_clock::now() - start5);
+  static uint64_t total_time5 = 0;
+  total_time5 += duration5.count();
+  //std::cerr << "JOE Writer::unordered_write total_time5 " << total_time5 << std::endl;
 
   // Clear the boolean vector for coordinate duplicates
   coord_dups.clear();
@@ -2334,22 +2451,47 @@ Status Writer::unordered_write() {
   frag_meta->set_num_tiles(tile_num);
 
   // Compute coordinates metadata
+  auto start6 = high_resolution_clock::now();
   RETURN_CANCEL_OR_ERROR_ELSE(
       compute_coords_metadata(tiles, frag_meta.get()), clean_up(uri));
+  auto duration6 = duration_cast<microseconds>(high_resolution_clock::now() - start6);
+  static uint64_t total_time6 = 0;
+  total_time6 += duration6.count();
+  //std::cerr << "JOE Writer::unordered_write total_time6 " << total_time6 << std::endl;
 
   // Filter all tiles
+  auto start7 = high_resolution_clock::now();
   RETURN_CANCEL_OR_ERROR_ELSE(filter_tiles(&tiles), clean_up(uri));
+  auto duration7 = duration_cast<microseconds>(high_resolution_clock::now() - start7);
+  static uint64_t total_time7 = 0;
+  total_time7 += duration7.count();
+  //std::cerr << "JOE Writer::unordered_write total_time7 " << total_time7 << std::endl;
 
   // Write tiles for all attributes and coordinates
+  auto start8 = high_resolution_clock::now();
   RETURN_CANCEL_OR_ERROR_ELSE(
       write_all_tiles(frag_meta.get(), tiles), clean_up(uri));
+  auto duration8 = duration_cast<microseconds>(high_resolution_clock::now() - start8);
+  static uint64_t total_time8 = 0;
+  total_time8 += duration8.count();
+  //std::cerr << "JOE Writer::unordered_write total_time8 " << total_time8 << std::endl;
 
   // Write the fragment metadata
+  auto start9 = high_resolution_clock::now();
   RETURN_CANCEL_OR_ERROR_ELSE(
       frag_meta->store(array_->get_encryption_key()), clean_up(uri));
+  auto duration9 = duration_cast<microseconds>(high_resolution_clock::now() - start9);
+  static uint64_t total_time9 = 0;
+  total_time9 += duration9.count();
+  //std::cerr << "JOE Writer::unordered_write total_time9 " << total_time9 << std::endl;
 
   // Add written fragment info
+  auto start10 = high_resolution_clock::now();
   add_written_fragment_info(frag_meta->fragment_uri());
+  auto duration10 = duration_cast<microseconds>(high_resolution_clock::now() - start10);
+  static uint64_t total_time10 = 0;
+  total_time10 += duration10.count();
+  //std::cerr << "JOE Writer::unordered_write total_time10 " << total_time10 << std::endl;
 
   return Status::Ok();
 }
@@ -2460,22 +2602,125 @@ Status Writer::write_tiles(
   const auto& var_uri = var_size ? frag_meta->var_uri(name) : URI("");
 
   // Write tiles
-  auto tile_num = tiles.size();
-  for (size_t i = 0, tile_id = 0; i < tile_num; ++i, ++tile_id) {
-    RETURN_NOT_OK(storage_manager_->write(uri, tiles[i].buffer()));
-    frag_meta->set_tile_offset(name, tile_id, tiles[i].buffer()->size());
+  size_t i = 0;
+  size_t tile_id = 0;
+  const auto tile_num = tiles.size();
+  while (i < tile_num) {
+    const Tile* tile = &tiles[i++];
+    ChunkedBuffer* chunked_buffer = tile->chunked_buffer();
 
-    STATS_COUNTER_ADD(writer_num_bytes_written, tiles[i].buffer()->size());
+    auto start1 = high_resolution_clock::now();
+    size_t populated_nchunks = chunked_buffer->nchunks();
+    if (chunked_buffer->size() != chunked_buffer->capacity()) {
+      populated_nchunks = 0;
+      for (uint64_t i = 0; i < chunked_buffer->nchunks(); ++i) {
+        uint32_t chunk_buffer_size;
+        RETURN_NOT_OK(
+            chunked_buffer->internal_buffer_size(i, &chunk_buffer_size));
+        if (chunk_buffer_size == 0) {
+          break;
+        }
+        ++populated_nchunks;
+      }
+    }
+    auto duration1 = duration_cast<microseconds>(high_resolution_clock::now() - start1);
+    static uint64_t total_time1 = 0;
+    total_time1 += duration1.count();
+    //std::cerr << "JOE Writer::write_tiles total_time1 " << total_time1 << std::endl;
+
+    // TODO could optimize to write a vector of buffers
+    auto start2 = high_resolution_clock::now();
+    RETURN_NOT_OK(storage_manager_->write(
+        uri, &populated_nchunks, sizeof(uint64_t)));
+    auto duration2 = duration_cast<microseconds>(high_resolution_clock::now() - start2);
+    static uint64_t total_time2 = 0;
+    total_time2 += duration2.count();
+    //std::cerr << "JOE Writer::write_tiles total_time2 " << total_time2 << std::endl;
+
+    auto start3 = high_resolution_clock::now();
+    for (size_t n = 0; n < populated_nchunks; ++n) {
+      void* buffer;
+      uint32_t buffer_size;
+      RETURN_NOT_OK(chunked_buffer->internal_buffer(n, &buffer));
+      RETURN_NOT_OK(chunked_buffer->internal_buffer_size(n, &buffer_size));
+      if (buffer_size == 0) {
+        continue;
+      }
+
+      RETURN_NOT_OK(storage_manager_->write(uri, buffer, buffer_size));
+    }
+    auto duration3 = duration_cast<microseconds>(high_resolution_clock::now() - start3);
+    static uint64_t total_time3 = 0;
+    total_time3 += duration3.count();
+    //std::cerr << "JOE Writer::write_tiles total_time3 " << total_time3 << std::endl;
+
+    frag_meta->set_tile_offset(
+        name, tile_id, sizeof(uint64_t) + chunked_buffer->size());
+
+    STATS_COUNTER_ADD(
+        writer_num_bytes_written, sizeof(uint64_t) + chunked_buffer->size());
 
     if (var_size) {
-      ++i;
+      tile = &tiles[i++];
+      chunked_buffer = tile->chunked_buffer();
 
-      RETURN_NOT_OK(storage_manager_->write(var_uri, tiles[i].buffer()));
-      frag_meta->set_tile_var_offset(name, tile_id, tiles[i].buffer()->size());
-      frag_meta->set_tile_var_size(name, tile_id, tiles[i].pre_filtered_size());
+      auto start6 = high_resolution_clock::now();
+      populated_nchunks = chunked_buffer->nchunks();
+      if (chunked_buffer->size() != chunked_buffer->capacity()) {
+        populated_nchunks = 0;
+        for (uint64_t i = 0; i < chunked_buffer->nchunks(); ++i) {
+          uint32_t chunk_buffer_size;
+          RETURN_NOT_OK(
+              chunked_buffer->internal_buffer_size(i, &chunk_buffer_size));
+          if (chunk_buffer_size == 0) {
+            break;
+          }
+          ++populated_nchunks;
+        }
+      }
+      auto duration6 = duration_cast<microseconds>(high_resolution_clock::now() - start6);
+      static uint64_t total_time6 = 0;
+      total_time6 += duration6.count();
+      //std::cerr << "JOE Writer::write_tiles total_time6 " << total_time6 << std::endl;
 
-      STATS_COUNTER_ADD(writer_num_bytes_written, tiles[i].buffer()->size());
+      auto start4 = high_resolution_clock::now();
+      RETURN_NOT_OK(storage_manager_->write(
+          var_uri, &populated_nchunks, sizeof(uint64_t)));
+      auto duration4 = duration_cast<microseconds>(high_resolution_clock::now() - start4);
+      static uint64_t total_time4 = 0;
+      total_time4 += duration4.count();
+      //std::cerr << "JOE Writer::write_tiles total_time4 " << total_time4 << std::endl;
+
+
+      auto start5 = high_resolution_clock::now();
+      for (size_t n = 0; n < populated_nchunks; ++n) {
+        void* buffer;
+        uint32_t buffer_size;
+        RETURN_NOT_OK(chunked_buffer->internal_buffer(n, &buffer));
+        RETURN_NOT_OK(chunked_buffer->internal_buffer_size(n, &buffer_size));
+        if (buffer_size == 0) {
+          continue;
+        }
+
+        RETURN_NOT_OK(
+            storage_manager_->write(var_uri, buffer, buffer_size));
+      }
+
+      auto duration5 = duration_cast<microseconds>(high_resolution_clock::now() - start5);
+      static uint64_t total_time5 = 0;
+      total_time5 += duration5.count();
+      //std::cerr << "JOE Writer::write_tiles total_time5 " << total_time5 << std::endl;
+
+      frag_meta->set_tile_var_offset(
+          name, tile_id, sizeof(uint64_t) + chunked_buffer->size());
+      frag_meta->set_tile_var_size(
+          name, tile_id, tile->pre_filtered_size());
+
+      STATS_COUNTER_ADD(
+          writer_num_bytes_written, sizeof(uint64_t) + chunked_buffer->size());
     }
+
+    ++tile_id;
   }
 
   // Close files, except in the case of global order

@@ -42,6 +42,10 @@
 #include <iostream>
 #include <sstream>
 
+// TODO JOE rm
+#include <chrono> 
+using namespace std::chrono; 
+
 namespace tiledb {
 namespace sm {
 
@@ -386,10 +390,24 @@ Status Query::process() {
 
   // Process query
   Status st = Status::Ok();
-  if (type_ == QueryType::READ)
+  if (type_ == QueryType::READ) {
+    auto start = high_resolution_clock::now();
     st = reader_.read();
-  else  // WRITE MODE
+    auto stop = high_resolution_clock::now();
+    auto duration = duration_cast<microseconds>(stop - start);
+    static uint64_t total_time = 0;
+    total_time += duration.count();
+    //std::cerr << "JOE read total_time " << total_time << std::endl;
+  }
+  else {  // WRITE MODE
+    auto start = high_resolution_clock::now();
     st = writer_.write();
+    auto stop = high_resolution_clock::now();
+    auto duration = duration_cast<microseconds>(stop - start);
+    static uint64_t total_time = 0;
+    total_time += duration.count();
+    std::cerr << "JOE write total_time " << total_time << std::endl;
+  }
 
   // Handle error
   if (!st.ok()) {

@@ -64,6 +64,7 @@ namespace sm {
 
 class Array;
 class Consolidator;
+class ChunkedBuffer;
 class RestClient;
 
 /** The storage manager that manages pretty much everything in TileDB. */
@@ -599,6 +600,18 @@ class StorageManager {
       const URI& uri, uint64_t offset, Buffer* buffer, uint64_t nbytes) const;
 
   /**
+   * Reads from a file into the raw input buffer.
+   *
+   * @param uri The URI file to read from.
+   * @param offset The offset in the file the read will start from.
+   * @param buffer The buffer to write into.
+   * @param nbytes The number of bytes to read.
+   * @return Status.
+   */
+  Status read(
+      const URI& uri, uint64_t offset, void* buffer, uint64_t nbytes) const;
+
+  /**
    * Sets a string/string KV "tag" on the storage manager instance.
    *
    * This is currently only meant for internal TileDB Inc. usage.
@@ -653,10 +666,11 @@ class StorageManager {
    *
    * @param uri The URI of the cached object.
    * @param offset The offset of the cached object.
-   * @param buffer The buffer whose contents will be cached.
+   * @param ChunkedBuffer The buffer whose contents will be cached.
    * @return Status.
    */
-  Status write_to_cache(const URI& uri, uint64_t offset, Buffer* buffer) const;
+  Status write_to_cache(
+      const URI& uri, uint64_t offset, ChunkedBuffer* chunked_buffer) const;
 
   /**
    * Writes the contents of a buffer into a URI file.
@@ -668,6 +682,15 @@ class StorageManager {
   Status write(const URI& uri, Buffer* buffer) const;
 
   /**
+   * Writes the contents of a buffer into a URI file.
+   *
+   * @param uri The file to write into.
+   * @param buffers The list of buffers to write.
+   * @return Status.
+   */
+  Status write(const URI& uri, const std::list<Buffer*>& buffers) const;
+
+  /**
    * Writes the input data into a URI file.
    *
    * @param uri The file to write into.
@@ -676,6 +699,15 @@ class StorageManager {
    * @return Status.
    */
   Status write(const URI& uri, void* data, uint64_t size) const;
+
+  /**
+   * Writes the input data into a URI file.
+   *
+   * @param uri The file to write into.
+   * @param buffers The list of buffers to write.
+   * @return Status.
+   */
+  Status write(const URI& uri, const std::list<std::pair<const void *, uint64_t>>& buffers) const;
 
  private:
   /* ********************************* */

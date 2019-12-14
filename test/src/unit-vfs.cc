@@ -52,7 +52,9 @@ TEST_CASE("VFS: Test read batching", "[vfs]") {
   uint32_t data_write[nelts], data_read[nelts];
   for (unsigned i = 0; i < nelts; i++)
     data_write[i] = i;
-  REQUIRE(vfs->write(testfile, data_write, nelts * sizeof(uint32_t)).ok());
+  std::list<std::pair<const void *, uint64_t>> buffer_pairs;
+  buffer_pairs.emplace_back(data_write, nelts * sizeof(uint32_t));
+  REQUIRE(vfs->write(testfile, buffer_pairs).ok());
 
   // Enable stats.
   stats::all_stats.set_enabled(true);

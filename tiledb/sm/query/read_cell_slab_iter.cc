@@ -39,6 +39,10 @@
 #include <iostream>
 #include <list>
 
+// TODO JOE rm
+#include <chrono> 
+using namespace std::chrono; 
+
 namespace tiledb {
 namespace sm {
 
@@ -203,6 +207,8 @@ void ReadCellSlabIter<T>::compute_cell_slab_overlap(
 template <class T>
 void ReadCellSlabIter<T>::compute_result_cell_slabs(
     const CellSlab<T>& cell_slab) {
+  auto start = high_resolution_clock::now();
+
   // Find the result space tile
   auto it = result_space_tiles_->find(cell_slab.tile_coords_);
   assert(it != result_space_tiles_->end());
@@ -271,6 +277,14 @@ void ReadCellSlabIter<T>::compute_result_cell_slabs(
     cell_slab_copy.length_ = slab_end - slab_start + 1;
     compute_result_cell_slabs_dense(cell_slab_copy, &result_space_tile);
   }
+
+  auto stop = high_resolution_clock::now();
+
+  auto duration = duration_cast<microseconds>(stop - start);
+
+  static uint64_t total_time = 0;
+  total_time += duration.count();
+  //std::cerr << "JOE compute_result_cell_slabs total_time " << total_time << std::endl;
 }
 
 template <class T>
