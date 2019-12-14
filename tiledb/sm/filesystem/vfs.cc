@@ -875,7 +875,7 @@ Status VFS::ls(const URI& parent, std::vector<URI>* uris) const {
         Status::VFSError("Unsupported URI scheme: " + parent.to_string()));
   }
   parallel_sort(paths.begin(), paths.end());
-  for (auto& path : paths) {
+  for (const auto& path : paths) {
     uris->emplace_back(path);
   }
   return Status::Ok();

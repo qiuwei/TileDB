@@ -375,9 +375,10 @@ Status Posix::read(
   // Checks
   uint64_t file_size;
   RETURN_NOT_OK(this->file_size(path, &file_size));
-  if (offset + nbytes > file_size)
+  if (offset + nbytes > file_size) {
     return LOG_STATUS(
         Status::IOError("Cannot read from file; Read exceeds file size"));
+  }
 
   // Open file
   int fd = open(path.c_str(), O_RDONLY);

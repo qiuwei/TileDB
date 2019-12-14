@@ -269,25 +269,62 @@ bool Dimension::is_anonymous() const {
 }
 
 template <class T>
-void Dimension::compute_mbr(const Tile& tile, Range* mbr) {
+Status Dimension::compute_mbr(const Tile& tile, Range* mbr) {
   assert(mbr != nullptr);
-  auto data = (const T*)(tile.internal_data());
-  assert(data != nullptr);
+  ChunkedBuffer *const chunked_buffer =
+    tile.chunked_buffer();
   auto cell_num = tile.cell_num();
   assert(cell_num > 0);
 
-  // Initialize MBR with the first tile values
-  T res[] = {data[0], data[0]};
-  mbr->set_range(res, sizeof(res));
+  size_t chunk_idx = 0;
+  size_t chunk_offset = 0;
 
-  // Expand the MBR with the rest tile values
-  for (uint64_t c = 1; c < cell_num; ++c)
-    expand_range_v<T>(&data[c], mbr);
+  // Fetch the first internal buffer.
+  void* buffer;
+  RETURN_NOT_OK(chunked_buffer->internal_buffer(chunk_idx, &buffer));
+
+  for (uint64_t c = 0; c < cell_num; ++c) {
+    // Move to the next internal chunk buffer if the offset exceeds the
+    // current chunk buffer's size.
+    uint32_t chunk_size;
+    RETURN_NOT_OK(
+        chunked_buffer->internal_buffer_size(chunk_idx, &chunk_size));
+    if (chunk_offset >= chunk_size) {
+      ++chunk_idx;
+      chunk_offset = 0;
+
+      // Fetch the next internal buffer and its associated size.
+      RETURN_NOT_OK(chunked_buffer->internal_buffer(chunk_idx, &buffer));
+      RETURN_NOT_OK(
+          chunked_buffer->internal_buffer_size(chunk_idx, &chunk_size));
+    }
+
+    // Sanity check we have sufficient space to perform our random access
+    // read of 'buffer'.
+    if (chunk_size < (chunk_offset + sizeof(T))) {
+      return Status::UtilsError(
+          "Out of bounds read to internal chunk buffer of size " +
+          std::to_string(chunk_size));
+    }
+
+    const T *const v =
+      reinterpret_cast<T*>(static_cast<char*>(buffer) + chunk_offset);
+    chunk_offset += sizeof(T);
+
+    if (c == 0) {
+      T res[] = {v[c], v[c]};
+      mbr->set_range(res, sizeof(res));
+    } else {
+      expand_range_v<T>(&v[c], mbr);
+    }
+  }
+
+  return Status::Ok();
 }
 
-void Dimension::compute_mbr(const Tile& tile, Range* mbr) const {
+Status Dimension::compute_mbr(const Tile& tile, Range* mbr) const {
   assert(compute_mbr_func_ != nullptr);
-  compute_mbr_func_(tile, mbr);
+  return compute_mbr_func_(tile, mbr);
 }
 
 template <class T>
