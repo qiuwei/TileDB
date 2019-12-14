@@ -1386,13 +1386,18 @@ Status FragmentMetadata::load_v1_v2(const EncryptionKey& encryption_key) {
   TileIO tile_io(storage_manager_, fragment_metadata_uri);
   auto tile = (Tile*)nullptr;
   RETURN_NOT_OK(tile_io.read_generic(&tile, 0, encryption_key));
-  tile->disown_buff();
-  auto buff = tile->buffer();
-  STATS_COUNTER_ADD(fragment_metadata_bytes_read, tile_io.file_size());
+
+  auto chunked_buffer = tile->chunked_buffer();
+  Buffer buff;
+  RETURN_NOT_OK(buff.realloc(chunked_buffer->size()));
+  buff.set_size(chunked_buffer->size());
+  RETURN_NOT_OK_ELSE(
+      chunked_buffer->read(buff.data(), buff.size(), 0), delete tile);
   delete tile;
+  STATS_COUNTER_ADD(fragment_metadata_bytes_read, tile_io.file_size());
 
   // Deserialize
-  ConstBuffer cbuff(buff);
+  ConstBuffer cbuff(&buff);
   RETURN_NOT_OK(load_version(&cbuff));
   RETURN_NOT_OK(load_non_empty_domain(&cbuff));
   RETURN_NOT_OK(load_mbrs(&cbuff));
@@ -1403,8 +1408,6 @@ Status FragmentMetadata::load_v1_v2(const EncryptionKey& encryption_key) {
   RETURN_NOT_OK(load_last_tile_cell_num(&cbuff));
   RETURN_NOT_OK(load_file_sizes(&cbuff));
   RETURN_NOT_OK(load_file_var_sizes(&cbuff));
-
-  delete buff;
 
   return Status::Ok();
 }
@@ -1559,7 +1562,9 @@ Status FragmentMetadata::store_rtree(
     const EncryptionKey& encryption_key, uint64_t* nbytes) {
   Buffer buff;
   RETURN_NOT_OK(write_rtree(&buff));
-  RETURN_NOT_OK(write_generic_tile_to_file(encryption_key, &buff, nbytes));
+  RETURN_NOT_OK(
+      write_generic_tile_to_file(encryption_key, std::move(buff), nbytes));
+
   return Status::Ok();
 }
 
@@ -1597,9 +1602,14 @@ Status FragmentMetadata::read_generic_tile_from_file(
 
   // Read metadata
   TileIO tile_io(storage_manager_, fragment_metadata_uri);
-  auto tile = (Tile*)nullptr;
+  Tile* tile = nullptr;
   RETURN_NOT_OK(tile_io.read_generic(&tile, offset, encryption_key));
-  tile->buffer()->swap(*buff);
+
+  const auto chunked_buffer = tile->chunked_buffer();
+  buff->realloc(chunked_buffer->size());
+  buff->set_size(chunked_buffer->size());
+  RETURN_NOT_OK_ELSE(
+      chunked_buffer->read(buff->data(), buff->size(), 0), delete tile);
   delete tile;
 
   return Status::Ok();
@@ -1619,16 +1629,26 @@ Status FragmentMetadata::read_file_footer(Buffer* buff) const {
 }
 
 Status FragmentMetadata::write_generic_tile_to_file(
-    const EncryptionKey& encryption_key, Buffer* buff, uint64_t* nbytes) const {
+    const EncryptionKey& encryption_key,
+    Buffer&& buff,
+    uint64_t* nbytes) const {
   URI fragment_metadata_uri = fragment_uri_.join_path(
       std::string(constants::fragment_metadata_filename));
-  buff->reset_offset();
+
+  ChunkedBuffer* const chunked_buffer = new ChunkedBuffer();
+  RETURN_NOT_OK_ELSE(
+      Tile::buffer_to_contigious_fixed_chunks(
+          buff, 0, constants::generic_tile_cell_size, chunked_buffer),
+      delete chunked_buffer);
+  buff.disown_data();
+
   Tile tile(
       constants::generic_tile_datatype,
       constants::generic_tile_cell_size,
       0,
-      buff,
-      false);
+      chunked_buffer,
+      true);
+
   TileIO tile_io(storage_manager_, fragment_metadata_uri);
   RETURN_NOT_OK(tile_io.write_generic(&tile, encryption_key, nbytes));
 
@@ -1647,7 +1667,8 @@ Status FragmentMetadata::store_tile_offsets(
     unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes) {
   Buffer buff;
   RETURN_NOT_OK(write_tile_offsets(idx, &buff));
-  RETURN_NOT_OK(write_generic_tile_to_file(encryption_key, &buff, nbytes));
+  RETURN_NOT_OK(
+      write_generic_tile_to_file(encryption_key, std::move(buff), nbytes));
 
   return Status::Ok();
 }
@@ -1681,7 +1702,8 @@ Status FragmentMetadata::store_tile_var_offsets(
     unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes) {
   Buffer buff;
   RETURN_NOT_OK(write_tile_var_offsets(idx, &buff));
-  RETURN_NOT_OK(write_generic_tile_to_file(encryption_key, &buff, nbytes));
+  RETURN_NOT_OK(
+      write_generic_tile_to_file(encryption_key, std::move(buff), nbytes));
 
   return Status::Ok();
 }
@@ -1717,7 +1739,8 @@ Status FragmentMetadata::store_tile_var_sizes(
     unsigned idx, const EncryptionKey& encryption_key, uint64_t* nbytes) {
   Buffer buff;
   RETURN_NOT_OK(write_tile_var_sizes(idx, &buff));
-  RETURN_NOT_OK(write_generic_tile_to_file(encryption_key, &buff, nbytes));
+  RETURN_NOT_OK(
+      write_generic_tile_to_file(encryption_key, std::move(buff), nbytes));
 
   return Status::Ok();
 }

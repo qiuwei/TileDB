@@ -119,14 +119,14 @@ class Dimension {
    * Computed the minimum bounding range of the values stored in
    * `tile`.
    */
-  void compute_mbr(const Tile& tile, Range* mbr) const;
+  Status compute_mbr(const Tile& tile, Range* mbr) const;
 
   /**
    * Computed the minimum bounding range of the values stored in
    * `tile`.
    */
   template <class T>
-  static void compute_mbr(const Tile& tile, Range* mbr);
+  static Status compute_mbr(const Tile& tile, Range* mbr);
 
   /**
    * Crops the input 1D range such that it does not exceed the
@@ -304,7 +304,7 @@ class Dimension {
    * Stores the appropriate templated compute_mbr() function based on the
    * dimension datatype.
    */
-  std::function<void(const Tile&, Range*)> compute_mbr_func_;
+  std::function<Status(const Tile&, Range*)> compute_mbr_func_;
 
   /**
    * Stores the appropriate templated crop_range() function based on the
