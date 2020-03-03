@@ -456,6 +456,9 @@ int ObjectMgmtFx::write_path(
   // Cast data to string
   auto* str = static_cast<std::string*>(data);
 
+  std::cerr << "JOE write_path path " << std::string(path) << std::endl;
+  std::cerr << "JOE write_path data" << *str << std::endl;
+
   // Simply print the path and type
   std::string path_str = path;
   if (path_str.back() == '/')
