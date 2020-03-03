@@ -205,8 +205,7 @@ Status Azure::wait_for_container_to_be_deleted(
 Status Azure::empty_container(const URI& container) const {
   assert(client_);
 
-  const URI uri_dir = container.add_trailing_slash();
-  return remove_dir(uri_dir);
+  return remove_dir(container);
 }
 
 Status Azure::flush_blob(const URI& uri) {
@@ -492,6 +491,30 @@ Status Azure::is_blob(
   return Status::Ok();
 }
 
+std::string Azure::remove_front_slash(const std::string& path) const {
+  if (path.front() == '/') {
+    return path.substr(1, path.length());
+  }
+
+  return path;
+}
+
+std::string Azure::add_trailing_slash(const std::string& path) const {
+  if (path.back() != '/') {
+    return path + "/";
+  }
+
+  return path;
+}
+
+std::string Azure::remove_trailing_slash(const std::string& path) const {
+  if (path.back() == '/') {
+    return path.substr(0, path.length() - 1);
+  }
+
+  return path;
+}
+
 Status Azure::ls(
     const URI& uri,
     std::vector<std::string>* paths,
@@ -536,7 +559,9 @@ Status Azure::ls(
         outcome.response();
 
     for (const auto& blob : response.blobs) {
-      paths->emplace_back("azure://" + container_name + "/" + blob.name);
+      paths->emplace_back(
+          "azure://" + container_name + "/" +
+          remove_front_slash(remove_trailing_slash(blob.name)));
     }
 
     continuation_token = response.next_marker;
@@ -783,6 +808,11 @@ Status Azure::touch(const URI& uri) const {
   if (!uri.is_azure()) {
     return LOG_STATUS(Status::AzureError(
         std::string("URI is not an Azure URI: " + uri.to_string())));
+  }
+
+  if (uri.to_string().back() == '/') {
+    return LOG_STATUS(Status::AzureError(std::string(
+        "Cannot create file; URI is a directory: " + uri.to_string())));
   }
 
   bool is_blob;

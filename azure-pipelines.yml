@@ -8,56 +8,12 @@ jobs:
 - job:
   strategy:
     matrix:
-      linux:
-        imageName: 'ubuntu-16.04'
-        CXX: g++
-        TILEDB_TOOLS: ON
-        TILEDB_FORCE_BUILD_DEPS: ON
-      linux_s3:
-        imageName: 'ubuntu-16.04'
-        TILEDB_S3: ON
-        TILEDB_STATIC: OFF
-        CXX: g++
-      linux_hdfs:
-        imageName: 'ubuntu-16.04'
-        TILEDB_HDFS: ON
-        CXX: g++
-      linux_azure:
-        imageName: 'ubuntu-16.04'
-        TILEDB_AZURE: ON
-        TILEDB_STATIC: OFF
-        CXX: g++
-      macOS:
-        imageName: 'macOS-10.14'
-        TILEDB_S3: ON
-        CXX: clang++
       macOS_azure:
         imageName: 'macOS-10.14'
         TILEDB_AZURE: ON
         CXX: clang++
-      linux_asan:
-        imageName: 'ubuntu-16.04'
-        TILEDB_CI_ASAN: ON
-        TILEDB_TBB: OFF
-        CXX: g++-7
-      linux_serialization:
-        imageName: 'ubuntu-16.04'
-        TILEDB_SERIALIZATION: ON
-        TILEDB_S3: ON
-        CXX: g++
 
   pool:
     vmImage: $(imageName)
   steps:
   - template: scripts/azure-linux_mac.yml
-
-- job: Windows
-  strategy:
-    matrix:
-      VS2017:
-        imageName: 'vs2017-win2016'
-        TILEDB_S3: ON
-  pool:
-    vmImage: $(imageName)
-  steps:
-  - template: scripts/azure-windows.yml
