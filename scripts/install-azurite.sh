@@ -31,16 +31,15 @@ die() {
 }
 
 install_apt_pkgs() {
-  sudo apt-get -y install docker || die "could not install docker dependency"
+  sudo apt-get -y install nodejs-dev node-gyp libssl1.0 npm || die "could not install nodejs dependency"
 }
 
 install_yum_pkgs() {
-  sudo yum -y install docker || die "could not install docker dependency"
+  sudo yum -y install nodejs-dev node-gyp libssl1.0 npm || die "could not install nodejs dependency"
 }
 
 install_brew_pkgs() {
   brew install node || brew link --overwrite node
-  npm install -g azurite
 }
 
 install_deps() {
@@ -50,15 +49,20 @@ install_deps() {
     elif [ -n "$(command -v yum)" ]; then
       install_yum_pkgs
     fi
+
+    sudo npm install -g azurite
   elif [[ $OSTYPE == darwin* ]]; then
     if [ -n "$(command -v brew)" ]; then
       install_brew_pkgs
     else
       die "homebrew is not installed!"
     fi
+
+    npm install -g azurite
   else
     die "unsupported package management system"
   fi
+
 }
 
 run() {
